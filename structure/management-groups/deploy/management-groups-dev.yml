@@ -1,0 +1,68 @@
+# ----------------------------------------------------------------------------------
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+#
+# THIS CODE AND INFORMATION ARE PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, 
+# EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES 
+# OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR PURPOSE.
+# ----------------------------------------------------------------------------------
+
+trigger:
+  batch: true
+  branches:
+    include:
+    - dev
+  paths:
+    include:
+    - management-groups/*
+ 
+pool:
+  vmImage: ubuntu-latest
+ 
+variables:
+- group: 'DevEnvironmentConfig'
+ 
+stages:
+ 
+- stage: Validate
+  jobs:
+  - job: ValidateBicepCode
+    displayName: Validate Bicep code
+    steps:
+      - script: |
+          az bicep build --file management-groups/main.bicep
+        name: LintBicepCode
+        displayName: Run Bicep linter
+      - task: AzureCLI@2
+        name: RunWhatIf
+        displayName: Run what-if
+        inputs:
+          azureSubscription: $(ServiceConnectionName)
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            az deployment tenant create --what-if `
+              --location $(Location) `
+              --template-file ./management-groups/main.bicep `
+              --parameters ./management-groups/main.bicepparam
+         
+- stage: Deploy
+  dependsOn: Validate
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+  jobs:
+  - job: Deploy
+    steps:
+      - task: AzureCLI@2
+        name: Deploy
+        displayName: Deploy to Azure
+        inputs:
+          azureSubscription: $(ServiceConnectionName)
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            $deploymentName = "devops-lz-mgmt-$(Build.BuildNumber)"
+            az deployment tenant create `
+              --location $(Location) `
+              --template-file ./management-groups/main.bicep `
+              --parameters .management-groups/main.bicepparam `
+              --name $deploymentName
